@@ -50,7 +50,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"version": "v12-typo-fix"}
+    return {"version": "v13-403-retry"}
 
 async def prewarm_streams(video_ids: List[str]):
     """Background task to fetch stream URLs for top results."""
@@ -147,16 +147,34 @@ async def stream_audio(request: Request, video_id: str):
     try:
         # 1. HEAD request optimization: Just return headers, don't start stream generator
         if request.method == "HEAD":
-            # Fast check against YouTube for real headers
-            async with httpx_client.stream("GET", audio_url, headers=headers, timeout=5) as r:
-                res_headers = {
-                    "Accept-Ranges": "bytes",
-                    "Content-Type": r.headers.get("Content-Type", "audio/mpeg").split(";")[0].strip(),
-                    "X-Accel-Buffering": "no",
-                }
-                if r.headers.get("Content-Length"): res_headers["Content-Length"] = r.headers.get("Content-Length")
-                if r.headers.get("Content-Range"): res_headers["Content-Range"] = r.headers.get("Content-Range")
-                return Response(status_code=r.status_code, headers=res_headers)
+            async def get_head_response(url):
+                # We use GET stream because some YouTube formats don't support real HEAD
+                return await httpx_client.stream("GET", url, headers=headers, timeout=5)
+
+            try:
+                async with await get_head_response(audio_url) as r:
+                    if r.status_code == 403:
+                        print(f"[{time.time()-start_time:.2f}s] HEAD 403. Re-extracting...")
+                        info = await yt_service.get_stream_url(video_id)
+                        if info and "url" in info:
+                            audio_url = info["url"]
+                            await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
+                            async with await get_head_response(audio_url) as r2:
+                                return Response(status_code=r2.status_code, headers={
+                                    "Accept-Ranges": "bytes",
+                                    "Content-Type": r2.headers.get("Content-Type", "audio/mpeg").split(";")[0].strip(),
+                                    "X-Accel-Buffering": "no",
+                                })
+                    
+                    return Response(status_code=r.status_code, headers={
+                        "Accept-Ranges": "bytes",
+                        "Content-Type": r.headers.get("Content-Type", "audio/mpeg").split(";")[0].strip(),
+                        "X-Accel-Buffering": "no",
+                    })
+            except Exception as e:
+                print(f"HEAD failed: {e}")
+                # Fallback to a plain 200 to keep the browser happy
+                return Response(status_code=200, headers={"Accept-Ranges": "bytes", "Content-Type": "audio/mpeg"})
 
         # 2. GET request: Start streaming
         req = httpx_client.build_request("GET", audio_url, headers=headers)
