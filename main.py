@@ -196,9 +196,12 @@ async def stream_audio(request: Request, video_id: str):
             r = http_session.get(audio_url, headers=upstream_headers, stream=True, timeout=5)
 
         res_headers = {
-
             "Accept-Ranges": "bytes",
             "Content-Type": r.headers.get("Content-Type", "audio/mpeg"),
+            "X-Accel-Buffering": "no",  # Tell proxies (nginx/railway) not to buffer
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
         }
         if r.headers.get("Content-Range"):
             res_headers["Content-Range"] = r.headers.get("Content-Range")
@@ -213,8 +216,8 @@ async def stream_audio(request: Request, video_id: str):
 
         def iter_content():
             try:
-                # Reduced chunk size for better data efficiency if user skips
-                for chunk in r.iter_content(chunk_size=64 * 1024):
+                # Tiny 8KB chunks for instant playback start
+                for chunk in r.iter_content(chunk_size=8 * 1024):
                     if chunk:
                         yield chunk
             finally:
