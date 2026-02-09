@@ -319,58 +319,70 @@ async def set_active_device(request: Request):
 @app.websocket("/ws")
 @app.websocket("/ws/music")
 async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    user_id = "guest"
-    device_id = None
+    client_host = websocket.client.host if websocket.client else "unknown"
+    logger.info(f"WebSocket connection attempt from {client_host}")
     
     try:
-        while True:
-            data = await websocket.receive_text()
-            req = json.loads(data)
-            
-            if req.get("type") == "auth":
-                user_id = req.get("user_id", "guest")
-                device_id = req.get("device_id")
-            
-            elif req.get("type") == "ping":
-                if device_id:
-                    device_manager.update_device_heartbeat(user_id, device_id)
-                await websocket.send_json({"type": "pong"})
+        await websocket.accept()
+        logger.info(f"WebSocket connection accepted from {client_host}")
+        user_id = "guest"
+        device_id = None
+        
+        try:
+            while True:
+                data = await websocket.receive_text()
+                req = json.loads(data)
+                
+                if req.get("type") == "auth":
+                    user_id = req.get("user_id", "guest")
+                    device_id = req.get("device_id")
+                    logger.info(f"WebSocket authenticated: user={user_id}, device={device_id}")
+                
+                elif req.get("type") == "ping":
+                    if device_id:
+                        device_manager.update_device_heartbeat(user_id, device_id)
+                    await websocket.send_json({"type": "pong"})
 
-            elif req.get("type") == "search":
-                results = await search_service.search_songs(req.get("query"), user_id=user_id)
-                # Enrich with cached stream URLs
-                for song in results:
-                    cached_url = await redis_client.get(f"stream:{song['id']}")
-                    if cached_url:
-                        song["stream_url"] = cached_url if isinstance(cached_url, str) else cached_url.decode('utf-8')
+                elif req.get("type") == "search":
+                    results = await search_service.search_songs(req.get("query"), user_id=user_id)
+                    # Enrich with cached stream URLs
+                    for song in results:
+                        cached_url = await redis_client.get(f"stream:{song['id']}")
+                        if cached_url:
+                            song["stream_url"] = cached_url if isinstance(cached_url, str) else cached_url.decode('utf-8')
+                    
+                    await websocket.send_json({
+                        "type": "search_results", 
+                        "query": req.get("query"), 
+                        "results": results
+                    })
+                    
+                    # Use asyncio task instead of BackgroundTasks (not natively supported in WS)
+                    if results:
+                        asyncio.create_task(prewarm_streams([results[0]["id"]]))
                 
-                await websocket.send_json({
-                    "type": "search_results", 
-                    "query": req.get("query"), 
-                    "results": results
-                })
-                
-                # Use asyncio task instead of BackgroundTasks (not natively supported in WS)
-                if results:
-                    asyncio.create_task(prewarm_streams([results[0]["id"]]))
-            
-            elif req.get("type") == "autocomplete":
-                results = await search_service.search_songs(req.get("query"), limit=5, user_id=user_id)
-                for song in results:
-                    cached_url = await redis_client.get(f"stream:{song['id']}")
-                    if cached_url:
-                        song["stream_url"] = cached_url if isinstance(cached_url, str) else cached_url.decode('utf-8')
-                        
-                await websocket.send_json({
-                    "type": "suggestions", 
-                    "query": req.get("query"), 
-                    "results": results
-                })
-    except WebSocketDisconnect:
-        pass
+                elif req.get("type") == "autocomplete":
+                    results = await search_service.search_songs(req.get("query"), limit=5, user_id=user_id)
+                    for song in results:
+                        cached_url = await redis_client.get(f"stream:{song['id']}")
+                        if cached_url:
+                            song["stream_url"] = cached_url if isinstance(cached_url, str) else cached_url.decode('utf-8')
+                            
+                    await websocket.send_json({
+                        "type": "suggestions", 
+                        "query": req.get("query"), 
+                        "results": results
+                    })
+        except WebSocketDisconnect:
+            logger.info(f"WebSocket disconnected normally from {client_host}")
+        except Exception as e:
+            logger.error(f"WebSocket error from {client_host}: {e}")
+            import traceback
+            traceback.print_exc()
     except Exception as e:
-        print(f"WS Critical Error: {e}")
+        logger.error(f"WebSocket accept failed from {client_host}: {e}")
+        import traceback
+        traceback.print_exc()
 
 @app.get("/debug/extract/{video_id}")
 async def debug_extract(video_id: str):
@@ -400,4 +412,12 @@ if __name__ == "__main__":
     import os
     port = int(os.getenv("PORT", 8000))
     logger.info(f"Server starting on port {port}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=port,
+        ws_ping_interval=30,
+        ws_ping_timeout=10,
+        proxy_headers=True,
+        forwarded_allow_ips="*"
+    )
