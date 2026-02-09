@@ -6,7 +6,7 @@ from asyncio import Semaphore
 class YouTubeService:
     def __init__(self):
         self.YDL_OPTS = {
-            "format": "bestaudio/best",
+            "format": "bestaudio[abr<=128]/bestaudio/best",
             "quiet": True,
             "no_warnings": True,
             "extract_flat": False, # Need full format extraction

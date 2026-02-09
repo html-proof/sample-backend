@@ -81,8 +81,8 @@ class SearchService:
 
         def _blocking_search():
             with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
-                # Fetch more than needed to allow for personal ranking (Top 40)
-                search_results = ydl.extract_info(f"ytsearch40:{search_query}", download=False)
+                # Reduced from 40 to 20 to save metadata overhead
+                search_results = ydl.extract_info(f"ytsearch20:{search_query}", download=False)
                 return search_results.get('entries', [])
 
         try:
@@ -157,10 +157,8 @@ class SearchService:
                     "id": entry.get('id'),
                     "title": title,
                     "artist": channel,
-                    "channelId": entry.get('uploader_id'),
                     "duration": duration,
                     "thumbnail": entry.get('thumbnails', [{}])[0].get('url'),
-                    "album": entry.get('album'),
                     "score": score
                 })
                 

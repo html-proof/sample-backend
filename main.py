@@ -109,8 +109,7 @@ async def suggestions(q: str = Query(...), user_id: str = "guest"):
             "id": s["id"],
             "title": s["title"],
             "thumbnail": s["thumbnail"],
-            "duration": s["duration"],
-            "type": "suggestion"
+            "duration": s["duration"]
         } for s in results]
         
         await redis_client.setex(cache_key, 1800, json.dumps(formatted))
