@@ -8,20 +8,18 @@ class YouTubeService:
             "format": "bestaudio/best",
             "quiet": True,
             "no_warnings": True,
-            "extract_flat": True,
+            "extract_flat": False, # Need full format extraction
             "skip_download": True,
             "nocheckcertificate": True,
-            "youtube_include_dash_manifest": False,
-            "youtube_include_hls_manifest": False,
+            "youtube_include_dash_manifest": True, # Sometimes needed for bestaudio
             "no_color": True,
-            "socket_timeout": 5, 
-            "retries": 1, 
+            "socket_timeout": 10, 
+            "retries": 2, 
             "noplaylist": True,
-            "lazy_playlist": True,
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["web"]
+                    "player_client": ["android", "web"]
                 }
             }
         }
@@ -55,16 +53,29 @@ class YouTubeService:
             self.YDL_OPTS["cookiefile"] = os.path.join(current_dir, "cookies.txt")
             print(f"Loaded local cookies.txt")
 
-        self.ydl = yt_dlp.YoutubeDL(self.YDL_OPTS)
+    def get_opts(self):
+        opts = self.YDL_OPTS.copy()
+        # Ensure fresh cookies are always used if file exists
+        current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if os.path.exists(os.path.join(current_dir, "cookies_env.txt")):
+            opts["cookiefile"] = os.path.join(current_dir, "cookies_env.txt")
+        return opts
 
     async def get_stream_url(self, video_id: str):
         try:
-            url = f"https://www.youtube.com/watch?v={video_id}"
+            url = f"https://www.youtube.com/watch?v= {video_id}"
             loop = asyncio.get_event_loop()
-            info = await loop.run_in_executor(None, lambda: self.ydl.extract_info(url, download=False))
+            
+            # Use fresh instance for each request to avoid session flagging
+            opts = self.get_opts()
+            def extract():
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    return ydl.extract_info(url, download=False)
+            
+            info = await loop.run_in_executor(None, extract)
             return info
         except Exception as e:
-            print(f"Error fetching stream info: {e}")
+            print(f"Error fetching stream info for {video_id}: {e}")
             return None
 
 yt_service = YouTubeService()
