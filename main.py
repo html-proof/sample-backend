@@ -29,8 +29,20 @@ YDL_OPTS = {
     "skip_download": True,
     "source_address": "0.0.0.0",
 }
+
+# Check for cookies.txt to bypass bot detection
+if os.path.exists("cookies.txt"):
+    YDL_OPTS["cookiefile"] = "cookies.txt"
+    print("Using cookies.txt for authentication")
+
 ydl_instance = yt_dlp.YoutubeDL(YDL_OPTS)
-stream_ydl = yt_dlp.YoutubeDL({"format": "bestaudio/best", "quiet": True, "no_warnings": True})
+
+STREAM_OPTS = {"format": "bestaudio/best", "quiet": True, "no_warnings": True}
+if os.path.exists("cookies.txt"):
+    STREAM_OPTS["cookiefile"] = "cookies.txt"
+
+stream_ydl = yt_dlp.YoutubeDL(STREAM_OPTS)
+
 
 # Redis connection with connection timeout
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
