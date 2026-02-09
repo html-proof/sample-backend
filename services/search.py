@@ -104,11 +104,26 @@ class SearchService:
                 if self.contains_negative(title, search_query):
                     continue
 
+                # --- ADVANCED FILTERING & AI SCORING ---
+                from services.trusted_channels import trusted_channels
+                
+                # 1. Official/Basic Trust Score
+                trust_score = self.get_official_score(channel, title)
+                
+                # 2. AI Classification Check
+                ai_info = await trusted_channels.get_ai_trust_score(channel, [title])
+                # We penalize news, movies, and gaming heavily
+                # if trust_score already handled it via keywords, ai_info adds semantic weight
+                
+                if ai_info < 0: # Heavily penalized by AI (news, movies, etc.)
+                    continue
+
                 # Base score
                 score = 0
                 score += self.get_match_score(search_query, title)
-                score += self.get_official_score(channel, title)
+                score += trust_score
                 score += self.get_duration_score(duration)
+                score += ai_info # Add AI semantic trust
                 
                 # Popularity boost
                 if view_count and view_count > 10000000: score += 20
@@ -121,6 +136,11 @@ class SearchService:
                 if c_norm in skipped_artists:
                     score -= 100 # Heavy penalty for skipped artists
                 # -----------------------------
+                
+                # FINAL THRESHOLD: If it's not music/podcasts it should have a very low score
+                # Discard anything with too low score to be legitimate audio
+                if score < 20 and not any(k in title.lower() for k in ["song", "audio", "podcast", "music"]):
+                    continue
 
                 is_duplicate = False
                 lower_title = title.lower()

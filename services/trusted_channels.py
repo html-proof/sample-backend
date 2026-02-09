@@ -6,7 +6,9 @@ class TrustedChannels:
         self.trusted_keywords = ["topic", "vevo", "official", "records", "music", "entertainment"]
         self.spam_keywords = ["news", "politics", "speech", "interview", "comedy", "meme", "roast", 
                               "funny", "movie", "trailer", "scene", "dialogue", "short film", "vlog", 
-                              "reaction", "review", "status", "whatsapp", "tiktok", "reels", "shorts"]
+                              "reaction", "review", "status", "whatsapp", "tiktok", "reels", "shorts",
+                              "episode", "full movie", "teaser", "breaking", "debate", "sport", 
+                              "highlights", "gaming", "gameplay", "tutorial", "howto", "unboxing"]
 
     def normalize(self, text: str) -> str:
         if not text: return ""
@@ -17,11 +19,15 @@ class TrustedChannels:
     def is_spam(self, title: str, query: str) -> bool:
         title_norm = self.normalize(title)
         query_norm = self.normalize(query)
-        if any(q in query_norm for q in ["news", "trailer", "interview"]):
+        
+        # If user explicitly asked for these, don't filter them out
+        bypass_keywords = ["news", "trailer", "interview", "gaming", "debate", "highlights"]
+        if any(bw in query_norm for bw in bypass_keywords):
             return False
             
         for word in self.spam_keywords:
             if word in title_norm:
+                # If the spam word is NOT in the user query, it's likely unwanted
                 if word not in query_norm:
                     return True
         return False

@@ -40,17 +40,25 @@ class AIChannelClassifier:
         """Sophisticated heuristic fallback."""
         name = channel_name.lower()
         
-        music_keywords = ["music", "records", "audios", "audio", "label", "topic", "vevo"]
+        music_keywords = ["music", "records", "audios", "audio", "label", "topic", "vevo", "sounds"]
         if any(k in name for k in music_keywords):
             return {"channel_type": "music_label", "score": 0.9, "reason": "Keyword match in name"}
             
-        news_keywords = ["news", "live", "breaking", "times", "media"]
+        podcast_keywords = ["podcast", "talks", "show", "radio"]
+        if any(k in name for k in podcast_keywords):
+            return {"channel_type": "podcast", "score": 0.9, "reason": "Podcast keyword match"}
+
+        news_keywords = ["news", "live", "breaking", "times", "media", "today", "republic"]
         if any(k in name for k in news_keywords):
             return {"channel_type": "news", "score": 0.95, "reason": "News keyword match"}
             
-        movie_keywords = ["film", "movie", "trailers", "cinema"]
+        movie_keywords = ["film", "movie", "trailers", "cinema", "bollywood", "hollywood"]
         if any(k in name for k in movie_keywords):
             return {"channel_type": "movies", "score": 0.9, "reason": "Movie keyword match"}
+            
+        gaming_keywords = ["gaming", "game", "gamer", "playz", "clips"]
+        if any(k in name for k in gaming_keywords):
+            return {"channel_type": "gaming", "score": 0.9, "reason": "Gaming keyword match"}
 
         return {"channel_type": "unknown", "score": 0.5, "reason": "Indeterminate"}
 
