@@ -6,3 +6,9 @@ cookies.txt
 frontend/
 .DS_Store
 .vscode/
+*.json
+backend/*firebase-adminsdk*.json
+backend/**/firebase-adminsdk*.json
+serviceAccountKey.json
+credentials.json
+temp_secret.txt
