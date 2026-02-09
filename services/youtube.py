@@ -1,6 +1,7 @@
 import yt_dlp
 import os
 import asyncio
+from asyncio import Semaphore
 
 class YouTubeService:
     def __init__(self):
@@ -52,6 +53,9 @@ class YouTubeService:
         elif os.path.exists(os.path.join(current_dir, "cookies.txt")):
             self.YDL_OPTS["cookiefile"] = os.path.join(current_dir, "cookies.txt")
             print(f"Loaded local cookies.txt")
+        
+        # Limit parallel extractions to prevent OOM on Railway (512MB RAM)
+        self.semaphore = Semaphore(2)
 
     def get_opts(self):
         opts = self.YDL_OPTS.copy()
@@ -62,20 +66,22 @@ class YouTubeService:
         return opts
 
     async def get_stream_url(self, video_id: str):
-        try:
-            url = f"https://www.youtube.com/watch?v={video_id}"
-            loop = asyncio.get_event_loop()
-            
-            # Use fresh instance for each request to avoid session flagging
-            opts = self.get_opts()
-            def extract():
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    return ydl.extract_info(url, download=False)
-            
-            info = await loop.run_in_executor(None, extract)
-            return info
-        except Exception as e:
-            print(f"Error fetching stream info for {video_id}: {e}")
-            return None
+        # Throttle parallel extractions
+        async with self.semaphore:
+            try:
+                url = f"https://www.youtube.com/watch?v={video_id}"
+                loop = asyncio.get_event_loop()
+                
+                # Use fresh instance for each request to avoid session flagging
+                opts = self.get_opts()
+                def extract():
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        return ydl.extract_info(url, download=False)
+                
+                info = await loop.run_in_executor(None, extract)
+                return info
+            except Exception as e:
+                print(f"Error fetching stream info for {video_id}: {e}")
+                return None
 
 yt_service = YouTubeService()
