@@ -1,7 +1,11 @@
-import numpy as np
-import pandas as pd
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics.pairwise import cosine_similarity
+try:
+    import numpy as np
+    import pandas as pd
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.metrics.pairwise import cosine_similarity
+    HAS_ML = True
+except ImportError:
+    HAS_ML = False
 import os
 
 class SpotifyRecommender:
@@ -9,17 +13,21 @@ class SpotifyRecommender:
         self.csv_path = csv_path
         self.df = None
         self.features = None
-        self.scaler = StandardScaler()
+        self.scaler = None
         self.song_matrix = None
         self.enabled = False
 
+        if HAS_ML:
+             from sklearn.preprocessing import StandardScaler
+             self.scaler = StandardScaler()
+        
         self.feature_cols = [
             "danceability", "energy", "key", "loudness", "mode",
             "speechiness", "acousticness", "instrumentalness",
             "liveness", "valence", "tempo"
         ]
 
-        if os.path.exists(self.csv_path):
+        if HAS_ML and os.path.exists(self.csv_path):
             try:
                 self.load_data()
                 self.enabled = True
