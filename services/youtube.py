@@ -8,13 +8,15 @@ class YouTubeService:
             "format": "bestaudio/best",
             "quiet": True,
             "no_warnings": True,
-            "extract_flat": "in_playlist",
+            "extract_flat": True,
             "skip_download": True,
             "nocheckcertificate": True,
             "youtube_include_dash_manifest": False,
             "no_color": True,
             "socket_timeout": 10,
-            "retries": 3,
+            "retries": 1, # Faster failure for faster retry
+            "noplaylist": True,
+            "lazy_playlist": True,
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             "extractor_args": {
                 "youtube": {

@@ -166,9 +166,18 @@ async def stream_audio(request: Request, video_id: str):
 
         async def iter_content():
             try:
-                # Use smaller chunks for smoother streaming start
-                for chunk in r.iter_content(chunk_size=32 * 1024):
-                    if chunk: yield chunk
+                # Variable chunking: tiny chunks at start to fill browser buffer instantly
+                bytes_sent = 0
+                for chunk in r.iter_content(chunk_size=1024 * 32):
+                    if not chunk: continue
+                    
+                    if bytes_sent < 64 * 1024:
+                        # Send the first 64KB in tiny 8KB bursts
+                        for i in range(0, len(chunk), 8 * 1024):
+                            yield chunk[i:i + 8 * 1024]
+                    else:
+                        yield chunk
+                    bytes_sent += len(chunk)
             except Exception as e:
                 print(f"Stream chunk error: {e}")
             finally:
@@ -256,12 +265,24 @@ async def websocket_endpoint(websocket: WebSocket, background_tasks: BackgroundT
 
             elif req.get("type") == "search":
                 results = await search_service.search_songs(req.get("query"), user_id=user_id)
+                # Enrich with cached stream URLs for instant playback
+                for song in results:
+                    cached_url = await redis_client.get(f"stream:{song['id']}")
+                    if cached_url:
+                        song["stream_url"] = cached_url.decode('utf-8')
+                
                 await websocket.send_json({"type": "search_results", "query": req.get("query"), "results": results})
                 if results:
                     background_tasks.add_task(prewarm_streams, [results[0]["id"]])
             
             elif req.get("type") == "autocomplete":
                 results = await search_service.search_songs(req.get("query"), limit=5, user_id=user_id)
+                # Enrich suggestions too
+                for song in results:
+                    cached_url = await redis_client.get(f"stream:{song['id']}")
+                    if cached_url:
+                        song["stream_url"] = cached_url.decode('utf-8')
+                        
                 await websocket.send_json({"type": "suggestions", "query": req.get("query"), "results": results})
     except WebSocketDisconnect:
         pass
