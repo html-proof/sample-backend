@@ -183,9 +183,6 @@ async def stream_audio(request: Request, video_id: str):
         except Exception as e:
             print(f"Streaming critical failure: {e}")
             return JSONResponse(status_code=500, content={"error": str(e)})
-    except Exception as e:
-        print(f"Streaming critical failure: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
 
 # Recommendation Endpoints
 @app.get("/recommend/user/{user_id}")
