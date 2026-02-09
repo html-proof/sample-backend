@@ -108,51 +108,72 @@ async def stream_audio(request: Request, video_id: str):
     if not audio_url:
         info = await yt_service.get_stream_url(video_id)
         if not info or "url" not in info:
-            return JSONResponse(content={"error": "Extraction failed"}, status_code=500)
+            print(f"Extraction failed for {video_id}")
+            return JSONResponse(status_code=500, content={"error": "Failed to extract stream URL"})
+
         audio_url = info["url"]
+        # Cache for 1 hour
         await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
 
     # Proxying logic
     import requests
     http_session = requests.Session()
-    http_session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+    # Use the same User-Agent as yt-dlp to avoid basic blocking
+    http_session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+    })
     
     range_header = request.headers.get("Range")
     headers = {"Range": range_header} if range_header else {}
     
     try:
-        r = http_session.get(audio_url, headers=headers, stream=True, timeout=5)
+        r = http_session.get(audio_url, headers=headers, stream=True, timeout=10)
+        
+        # specific handling for 403 (expired link or IP block)
         if r.status_code == 403:
+            print(f"Stream 403 Forbidden for {video_id}, refreshing URL...")
             r.close()
+            # Force refresh extraction
             info = await yt_service.get_stream_url(video_id)
-            audio_url = info["url"]
-            await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
-            r = http_session.get(audio_url, headers=headers, stream=True, timeout=5)
+            if info and "url" in info:
+                audio_url = info["url"]
+                await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
+                r = http_session.get(audio_url, headers=headers, stream=True, timeout=10)
+            else:
+                return JSONResponse(status_code=403, content={"error": "Stream expired or blocked"})
+
+        if r.status_code != 200 and r.status_code != 206:
+             print(f"Upstream returned status {r.status_code}")
+             return JSONResponse(status_code=502, content={"error": "Upstream stream error"})
 
         res_headers = {
             "Accept-Ranges": "bytes",
             "Content-Type": r.headers.get("Content-Type", "audio/mpeg"),
-            "X-Accel-Buffering": "no",
+            "X-Accel-Buffering": "no", # Disable Nginx buffering if present
             "Cache-Control": "no-cache, no-store, must-revalidate",
         }
         if r.headers.get("Content-Range"): res_headers["Content-Range"] = r.headers.get("Content-Range")
         if r.headers.get("Content-Length"): res_headers["Content-Length"] = r.headers.get("Content-Length")
-
+        
+        # HEAD request optimization
         if request.method == "HEAD":
             r.close()
             return Response(status_code=r.status_code, headers=res_headers)
 
-        def iter_content():
+        async def iter_content():
             try:
-                for chunk in r.iter_content(chunk_size=16 * 1024):
+                # Use smaller chunks for smoother streaming start
+                for chunk in r.iter_content(chunk_size=32 * 1024):
                     if chunk: yield chunk
+            except Exception as e:
+                print(f"Stream chunk error: {e}")
             finally:
                 r.close()
 
         return StreamingResponse(iter_content(), status_code=r.status_code, media_type=res_headers["Content-Type"], headers=res_headers)
     except Exception as e:
-        print(f"Streaming failed: {e}")
-        return Response(status_code=500)
+        print(f"Streaming critical failure: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 # Recommendation Endpoints
 @app.get("/recommend/user/{user_id}")
