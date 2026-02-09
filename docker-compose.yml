@@ -1,0 +1,20 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+    restart: always
+
+  frontend:
+    build: ./frontend
+    ports:
+
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=https://sample-backend-production-b1dd.up.railway.app
+
+    depends_on:
+      - backend
+    restart: always
