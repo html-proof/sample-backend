@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query, BackgroundTasks
+from fastapi import FastAPI, Query, BackgroundTasks, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import yt_dlp
@@ -109,8 +109,8 @@ async def get_search_results(query: str) -> List[Dict]:
         
     return songs
 
-@app.get("/search")
-async def search_song(background_tasks: BackgroundTasks, q: str = Query(...)):
+@app.api_route("/search", methods=["GET", "HEAD"])
+async def search_song(request: Request, background_tasks: BackgroundTasks, q: str = Query(...)):
     try:
         results = await get_search_results(q)
         
@@ -126,14 +126,17 @@ async def search_song(background_tasks: BackgroundTasks, q: str = Query(...)):
         # Trigger pre-warming for the first 3 results
         vids = [s["id"] for s in results[:3] if s["id"]]
         background_tasks.add_task(prewarm_streams, vids)
+        
+        if request.method == "HEAD":
+            return Response(status_code=200)
+            
         return results
     except Exception as e:
-        # Fallback if the entire logic fails (e.g. network issue with yt-dlp)
         print(f"Search failed: {e}")
         return []
 
-@app.get("/stream/{video_id}")
-async def stream_audio(video_id: str):
+@app.api_route("/stream/{video_id}", methods=["GET", "HEAD"])
+async def stream_audio(request: Request, video_id: str):
     audio_url = None
     try:
         audio_url = await redis_client.get(f"stream:{video_id}")
@@ -154,6 +157,9 @@ async def stream_audio(video_id: str):
             print(f"Extraction failed: {e}")
             return {"error": "Could not extract audio"}
 
+    if request.method == "HEAD":
+        return Response(status_code=200)
+
     def audio_stream():
         with requests.get(audio_url, stream=True) as r:
             for chunk in r.iter_content(chunk_size=128 * 1024):
@@ -161,6 +167,7 @@ async def stream_audio(video_id: str):
                     yield chunk
 
     return StreamingResponse(audio_stream(), media_type="audio/mpeg")
+
 
 if __name__ == "__main__":
     import uvicorn
