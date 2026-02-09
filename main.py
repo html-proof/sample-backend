@@ -8,6 +8,7 @@ import asyncio
 from typing import List, Dict
 import logging
 import traceback
+from contextlib import asynccontextmanager
 
 # Service imports
 from services.search import search_service
@@ -21,8 +22,33 @@ from services.device_manager import device_manager
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+# httpx_client will be initialized in lifespan
+httpx_client = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global httpx_client
+    import httpx
+    try:
+        httpx_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(10.0, connect=5.0),
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+            follow_redirects=True
+        )
+        logger.info("Initializing HTTPX client on current event loop")
+    except Exception as e:
+        logger.error(f"Failed to initialize HTTPX client: {e}")
+    
+    yield
+    
+    if httpx_client:
+        await httpx_client.aclose()
+    if redis_client:
+        await redis_client.close()
+
+app = FastAPI(lifespan=lifespan)
 logger.info("Starting SonicStream Backend...")
+
 
 # Add CORS middleware
 app.add_middleware(
@@ -47,29 +73,6 @@ async def log_requests(request: Request, call_next):
             content={"error": "Internal Server Error", "detail": str(e), "traceback": traceback.format_exc()}
         )
 
-# httpx_client will be initialized in startup
-httpx_client = None
-
-@app.on_event("startup")
-async def startup_event():
-    global httpx_client
-    import httpx
-    try:
-        httpx_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(10.0, connect=5.0),
-            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
-            follow_redirects=True
-        )
-        logger.info("Initializing HTTPX client on current event loop")
-    except Exception as e:
-        logger.error(f"Failed to initialize HTTPX client: {e}")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    if httpx_client:
-        await httpx_client.aclose()
-    if redis_client:
-        await redis_client.close()
 
 # Safe Redis Wrapper
 class SafeRedis:
