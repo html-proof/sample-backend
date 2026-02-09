@@ -12,15 +12,16 @@ class YouTubeService:
             "skip_download": True,
             "nocheckcertificate": True,
             "youtube_include_dash_manifest": False,
+            "youtube_include_hls_manifest": False,
             "no_color": True,
-            "socket_timeout": 10,
-            "retries": 1, # Faster failure for faster retry
+            "socket_timeout": 5, # Aggressive timeout
+            "retries": 0, # Fail fast
             "noplaylist": True,
             "lazy_playlist": True,
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["android", "web"]
+                    "player_client": ["android", "ios"]
                 }
             }
         }

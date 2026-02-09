@@ -37,7 +37,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"version": "v6-ultra-low-latency"}
+    return {"version": "v7-extreme-speed"}
 
 async def prewarm_streams(video_ids: List[str]):
     """Background task to fetch stream URLs for top results."""
@@ -119,71 +119,70 @@ async def stream_audio(request: Request, video_id: str):
         # Cache for 1 hour
         await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
 
-    # Proxying logic
-    import requests
-    http_session = requests.Session()
-    # Use the same User-Agent as yt-dlp to avoid basic blocking
-    http_session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-    })
+    # Proxying logic with httpx for non-blocking streaming
+    import httpx
+    import time
+    start_time = time.time()
     
-    range_header = request.headers.get("Range")
-    headers = {"Range": range_header} if range_header else {}
-    
-    try:
-        r = http_session.get(audio_url, headers=headers, stream=True, timeout=10)
-        
-        # specific handling for 403 (expired link or IP block)
-        if r.status_code == 403:
-            print(f"Stream 403 Forbidden for {video_id}, refreshing URL...")
-            r.close()
-            # Force refresh extraction
-            info = await yt_service.get_stream_url(video_id)
-            if info and "url" in info:
-                audio_url = info["url"]
-                await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
-                r = http_session.get(audio_url, headers=headers, stream=True, timeout=10)
-            else:
-                return JSONResponse(status_code=403, content={"error": "Stream expired or blocked"})
-
-        if r.status_code != 200 and r.status_code != 206:
-             print(f"Upstream returned status {r.status_code}")
-             return JSONResponse(status_code=502, content={"error": "Upstream stream error"})
-
-        res_headers = {
-            "Accept-Ranges": "bytes",
-            "Content-Type": r.headers.get("Content-Type", "audio/mpeg"),
-            "X-Accel-Buffering": "no", # Disable Nginx buffering if present
-            "Cache-Control": "no-cache, no-store, must-revalidate",
+    # Use global httpx client or create one (AsyncClient is much faster for concurrent requests)
+    async with httpx.AsyncClient() as client:
+        range_header = request.headers.get("Range")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            "Range": range_header
+        } if range_header else {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         }
-        if r.headers.get("Content-Range"): res_headers["Content-Range"] = r.headers.get("Content-Range")
-        if r.headers.get("Content-Length"): res_headers["Content-Length"] = r.headers.get("Content-Length")
-        
-        # HEAD request optimization
-        if request.method == "HEAD":
-            r.close()
-            return Response(status_code=r.status_code, headers=res_headers)
 
-        async def iter_content():
-            try:
-                # Variable chunking: tiny chunks at start to fill browser buffer instantly
-                bytes_sent = 0
-                for chunk in r.iter_content(chunk_size=1024 * 32):
-                    if not chunk: continue
-                    
-                    if bytes_sent < 64 * 1024:
-                        # Send the first 64KB in tiny 8KB bursts
-                        for i in range(0, len(chunk), 8 * 1024):
-                            yield chunk[i:i + 8 * 1024]
-                    else:
-                        yield chunk
-                    bytes_sent += len(chunk)
-            except Exception as e:
-                print(f"Stream chunk error: {e}")
-            finally:
-                r.close()
+        try:
+            r = await client.build_request("GET", audio_url, headers=headers)._send_single_request()
+            # Note: client.stream() is preferred but build_request gives more control over stream lifecycle
+            
+            async def get_response(url, current_headers):
+                return await client.stream("GET", url, headers=current_headers, timeout=10)
 
-        return StreamingResponse(iter_content(), status_code=r.status_code, media_type=res_headers["Content-Type"], headers=res_headers)
+            response = await get_response(audio_url, headers)
+            
+            if response.status_code == 403:
+                print(f"[{time.time()-start_time:.2f}s] Stream 403 Refreshing...")
+                info = await yt_service.get_stream_url(video_id)
+                if info and "url" in info:
+                    audio_url = info["url"]
+                    await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
+                    response = await get_response(audio_url, headers)
+                else:
+                    return JSONResponse(status_code=403, content={"error": "Expired"})
+
+            print(f"[{time.time()-start_time:.2f}s] Stream connected: {response.status_code}")
+
+            res_headers = {
+                "Accept-Ranges": "bytes",
+                "Content-Type": response.headers.get("Content-Type", "audio/mpeg"),
+                "X-Accel-Buffering": "no",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+            }
+            if response.headers.get("Content-Range"): res_headers["Content-Range"] = response.headers.get("Content-Range")
+            if response.headers.get("Content-Length"): res_headers["Content-Length"] = response.headers.get("Content-Length")
+
+            async def iter_content():
+                try:
+                    bytes_sent = 0
+                    async for chunk in response.aiter_bytes(chunk_size=32 * 1024):
+                        if bytes_sent < 64 * 1024:
+                            # Tiny bursts at start for instant audio engine activation
+                            for i in range(0, len(chunk), 8 * 1024):
+                                yield chunk[i:i + 8 * 1024]
+                        else:
+                            yield chunk
+                        bytes_sent += len(chunk)
+                finally:
+                    await response.aclose()
+
+            return StreamingResponse(iter_content(), status_code=response.status_code, headers=res_headers)
+
+        except Exception as e:
+            print(f"Streaming critical failure: {e}")
+            return JSONResponse(status_code=500, content={"error": str(e)})
     except Exception as e:
         print(f"Streaming critical failure: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
