@@ -171,37 +171,42 @@ async def stream_audio(request: Request, video_id: str):
 
     # Pass through Range headers for super-fast browser buffering
     range_header = request.headers.get("Range")
-    headers = {
-        "Accept-Ranges": "bytes",
-        "Content-Type": "audio/mpeg",
-    }
-    
     upstream_headers = {}
     if range_header:
         upstream_headers["Range"] = range_header
 
-    if request.method == "HEAD":
-        return Response(status_code=200, headers=headers)
+    # Pre-fetch headers from YouTube to ensure browser gets Content-Length/Range
+    try:
+        with http_session.get(audio_url, headers=upstream_headers, stream=True, timeout=5) as r:
+            res_headers = {
+                "Accept-Ranges": "bytes",
+                "Content-Type": r.headers.get("Content-Type", "audio/mpeg"),
+            }
+            if r.headers.get("Content-Range"):
+                res_headers["Content-Range"] = r.headers.get("Content-Range")
+            if r.headers.get("Content-Length"):
+                res_headers["Content-Length"] = r.headers.get("Content-Length")
+            
+            status_code = r.status_code
 
-    def audio_stream():
-        # Use http_session for connection pooling speed
-        with http_session.get(audio_url, headers=upstream_headers, stream=True) as r:
-            # Propagate content range if present
-            content_range = r.headers.get("Content-Range")
-            for chunk in r.iter_content(chunk_size=256 * 1024): # Increased chunk size for faster delivery
-                if chunk:
-                    yield chunk
+            if request.method == "HEAD":
+                return Response(status_code=status_code, headers=res_headers)
 
-    # If it's a range request, return 206 Partial Content
-    status_code = 206 if range_header else 200
-    
-    # Get total size if possible for better browser seeking
-    return StreamingResponse(
-        audio_stream(), 
-        status_code=status_code,
-        media_type="audio/mpeg", 
-        headers=headers
-    )
+            def iter_content():
+                for chunk in r.iter_content(chunk_size=256 * 1024):
+                    if chunk:
+                        yield chunk
+
+            return StreamingResponse(
+                iter_content(),
+                status_code=status_code,
+                media_type=res_headers["Content-Type"],
+                headers=res_headers
+            )
+    except Exception as e:
+        print(f"Streaming failed: {e}")
+        return Response(status_code=500)
+
 
 
 
