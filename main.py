@@ -69,6 +69,11 @@ def get_search_results(query: str) -> List[Dict]:
 @app.get("/search")
 async def search_song(background_tasks: BackgroundTasks, q: str = Query(...)):
     results = await asyncio.to_thread(get_search_results, q)
+    
+    # Check if we have cached URLs for these items to include them directly
+    for song in results:
+        song["stream_url"] = stream_url_cache.get(song["id"])
+
     # Trigger pre-warming for the first 3 results in the background
     vids = [s["id"] for s in results[:3] if s["id"]]
     background_tasks.add_task(prewarm_streams, vids)
