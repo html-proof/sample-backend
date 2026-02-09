@@ -65,8 +65,11 @@ if COOKIE_PATH:
 
 stream_ydl = yt_dlp.YoutubeDL(STREAM_OPTS)
 
-
-
+# Global session for connection pooling to reduce SSL handshake overhead
+http_session = requests.Session()
+adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20)
+http_session.mount("https://", adapter)
+http_session.mount("http://", adapter)
 
 # Redis connection with connection timeout
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -166,21 +169,40 @@ async def stream_audio(request: Request, video_id: str):
             print(f"Extraction failed: {e}")
             return Response(content=json.dumps({"error": str(e)}), status_code=500, media_type="application/json")
 
+    # Pass through Range headers for super-fast browser buffering
+    range_header = request.headers.get("Range")
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Type": "audio/mpeg",
     }
+    
+    upstream_headers = {}
+    if range_header:
+        upstream_headers["Range"] = range_header
 
     if request.method == "HEAD":
         return Response(status_code=200, headers=headers)
 
     def audio_stream():
-        with requests.get(audio_url, stream=True) as r:
-            for chunk in r.iter_content(chunk_size=128 * 1024):
+        # Use http_session for connection pooling speed
+        with http_session.get(audio_url, headers=upstream_headers, stream=True) as r:
+            # Propagate content range if present
+            content_range = r.headers.get("Content-Range")
+            for chunk in r.iter_content(chunk_size=256 * 1024): # Increased chunk size for faster delivery
                 if chunk:
                     yield chunk
 
-    return StreamingResponse(audio_stream(), media_type="audio/mpeg", headers=headers)
+    # If it's a range request, return 206 Partial Content
+    status_code = 206 if range_header else 200
+    
+    # Get total size if possible for better browser seeking
+    return StreamingResponse(
+        audio_stream(), 
+        status_code=status_code,
+        media_type="audio/mpeg", 
+        headers=headers
+    )
+
 
 
 
