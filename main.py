@@ -132,74 +132,74 @@ async def stream_audio(request: Request, video_id: str):
         # Cache for 1 hour
         await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
 
-    # Proxying logic with httpx for non-blocking streaming
-    import httpx
+    # Proxying logic with global pooling and MIME normalization
     import time
     start_time = time.time()
     
-    async with httpx.AsyncClient() as client:
-        range_header = request.headers.get("Range")
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            "Range": range_header
-        } if range_header else {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+    range_header = request.headers.get("Range")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Range": range_header
+    } if range_header else {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+    }
+
+    try:
+        async def get_response(url, current_headers):
+            return await httpx_client.stream("GET", url, headers=current_headers, timeout=10)
+
+        response = await get_response(audio_url, headers)
+        
+        # Immediate retry on 403
+        if response.status_code == 403:
+            print(f"[{time.time()-start_time:.2f}s] Stream 403. Re-extracting...")
+            await response.aclose()
+            info = await yt_service.get_stream_url(video_id)
+            if info and "url" in info:
+                audio_url = info["url"]
+                await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
+                response = await get_response(audio_url, headers)
+            else:
+                return JSONResponse(status_code=403, content={"error": "Source link expired"})
+
+        # Normalization of MIME types to prevent NotSupportedError
+        raw_content_type = response.headers.get("Content-Type", "audio/mpeg")
+        # Strip codec info to avoid browser compatibility issues
+        base_content_type = raw_content_type.split(";")[0].strip()
+
+        res_headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Type": base_content_type,
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "max-age=3600",
         }
+        if response.headers.get("Content-Range"): res_headers["Content-Range"] = response.headers.get("Content-Range")
+        if response.headers.get("Content-Length"): res_headers["Content-Length"] = response.headers.get("Content-Length")
 
-        try:
-            async def get_response(url, current_headers):
-                return await client.stream("GET", url, headers=current_headers, timeout=10)
-
-            response = await get_response(audio_url, headers)
-            
-            # Auto-follow 403 (Expired)
-            if response.status_code == 403:
-                print(f"[{time.time()-start_time:.2f}s] Stream 403 Refreshing...")
+        async def iter_content():
+            try:
+                bytes_sent = 0
+                async for chunk in response.aiter_bytes(chunk_size=32 * 1024):
+                    if bytes_sent < 64 * 1024:
+                        # Deliver start instantly
+                        for i in range(0, len(chunk), 8 * 1024):
+                            yield chunk[i:i + 8 * 1024]
+                    else:
+                        yield chunk
+                    bytes_sent += len(chunk)
+            finally:
                 await response.aclose()
-                info = await yt_service.get_stream_url(video_id)
-                if info and "url" in info:
-                    audio_url = info["url"]
-                    await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
-                    response = await get_response(audio_url, headers)
-                else:
-                    return JSONResponse(status_code=403, content={"error": "Expired"})
 
-            print(f"[{time.time()-start_time:.2f}s] Stream connected: {response.status_code}")
+        return StreamingResponse(
+            iter_content(), 
+            status_code=response.status_code, 
+            headers=res_headers,
+            media_type=base_content_type
+        )
 
-            # Propagation of essential headers
-            res_headers = {
-                "Accept-Ranges": "bytes",
-                "Content-Type": response.headers.get("Content-Type", "audio/mpeg"),
-                "X-Accel-Buffering": "no",
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-            }
-            if response.headers.get("Content-Range"): res_headers["Content-Range"] = response.headers.get("Content-Range")
-            if response.headers.get("Content-Length"): res_headers["Content-Length"] = response.headers.get("Content-Length")
-
-            async def iter_content():
-                try:
-                    bytes_sent = 0
-                    async for chunk in response.aiter_bytes(chunk_size=32 * 1024):
-                        if bytes_sent < 64 * 1024:
-                            # Deliver first few notes instantly
-                            for i in range(0, len(chunk), 8 * 1024):
-                                yield chunk[i:i + 8 * 1024]
-                        else:
-                            yield chunk
-                        bytes_sent += len(chunk)
-                finally:
-                    await response.aclose()
-
-            return StreamingResponse(
-                iter_content(), 
-                status_code=response.status_code, 
-                headers=res_headers,
-                media_type=res_headers["Content-Type"]
-            )
-
-        except Exception as e:
-            print(f"Streaming critical failure: {e}")
-            return JSONResponse(status_code=500, content={"error": str(e)})
+    except Exception as e:
+        print(f"Streaming critical failure: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 # Recommendation Endpoints
 @app.get("/recommend/user/{user_id}")
