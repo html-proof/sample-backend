@@ -416,8 +416,7 @@ if __name__ == "__main__":
         app, 
         host="0.0.0.0", 
         port=port,
-        ws_ping_interval=30,
-        ws_ping_timeout=10,
-        proxy_headers=True,
-        forwarded_allow_ips="*"
+        ws_ping_interval=20,
+        ws_ping_timeout=20,
+        timeout_keep_alive=75
     )
