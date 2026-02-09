@@ -35,13 +35,16 @@ class FirebaseDB:
             cert_path = os.path.join(current_dir, SERVICE_ACCOUNT_FILE)
             
             if os.path.exists(cert_path):
-                cred = credentials.Certificate(cert_path)
-                self.app = firebase_admin.initialize_app(cred, {
-                    "databaseURL": FIREBASE_DB_URL
-                })
-                print("Firebase initialized via Local File.")
+                try:
+                    cred = credentials.Certificate(cert_path)
+                    self.app = firebase_admin.initialize_app(cred, {
+                        "databaseURL": FIREBASE_DB_URL
+                    })
+                    print("Firebase initialized via Local File.")
+                except Exception as e:
+                     print(f"Failed to load Firebase from Local File: {e}")
             else:
-                print(f"Warning: Firebase credentials not found. DB operations will fail.")
+                print(f"Warning: Firebase credentials not found. DB operations will fail gracefully.")
 
     def get_play_history(self, user_id, limit=50):
         ref = db.reference(f"play_history/{user_id}")
