@@ -50,7 +50,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"version": "v13-403-retry"}
+    return {"version": "v14-final-polish"}
 
 async def prewarm_streams(video_ids: List[str]):
     """Background task to fetch stream URLs for top results."""
@@ -153,24 +153,32 @@ async def stream_audio(request: Request, video_id: str):
 
             try:
                 async with await get_head_response(audio_url) as r:
+                    target_response = r
                     if r.status_code == 403:
                         print(f"[{time.time()-start_time:.2f}s] HEAD 403. Re-extracting...")
                         info = await yt_service.get_stream_url(video_id)
                         if info and "url" in info:
                             audio_url = info["url"]
                             await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
+                            # Open new connection for retry
                             async with await get_head_response(audio_url) as r2:
-                                return Response(status_code=r2.status_code, headers={
+                                res_headers = {
                                     "Accept-Ranges": "bytes",
                                     "Content-Type": r2.headers.get("Content-Type", "audio/mpeg").split(";")[0].strip(),
                                     "X-Accel-Buffering": "no",
-                                })
+                                }
+                                if r2.headers.get("Content-Length"): res_headers["Content-Length"] = r2.headers.get("Content-Length")
+                                if r2.headers.get("Content-Range"): res_headers["Content-Range"] = r2.headers.get("Content-Range")
+                                return Response(status_code=r2.status_code, headers=res_headers)
                     
-                    return Response(status_code=r.status_code, headers={
+                    res_headers = {
                         "Accept-Ranges": "bytes",
                         "Content-Type": r.headers.get("Content-Type", "audio/mpeg").split(";")[0].strip(),
                         "X-Accel-Buffering": "no",
-                    })
+                    }
+                    if r.headers.get("Content-Length"): res_headers["Content-Length"] = r.headers.get("Content-Length")
+                    if r.headers.get("Content-Range"): res_headers["Content-Range"] = r.headers.get("Content-Range")
+                    return Response(status_code=r.status_code, headers=res_headers)
             except Exception as e:
                 print(f"HEAD failed: {e}")
                 # Fallback to a plain 200 to keep the browser happy
