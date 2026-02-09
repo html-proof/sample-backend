@@ -63,7 +63,7 @@ class YouTubeService:
 
     async def get_stream_url(self, video_id: str):
         try:
-            url = f"https://www.youtube.com/watch?v= {video_id}"
+            url = f"https://www.youtube.com/watch?v={video_id}"
             loop = asyncio.get_event_loop()
             
             # Use fresh instance for each request to avoid session flagging
