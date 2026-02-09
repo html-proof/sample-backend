@@ -32,9 +32,9 @@ YDL_OPTS = {
 ydl_instance = yt_dlp.YoutubeDL(YDL_OPTS)
 stream_ydl = yt_dlp.YoutubeDL({"format": "bestaudio/best", "quiet": True, "no_warnings": True})
 
-# Redis connection
+# Redis connection with connection timeout
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+redis_client = redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=5, socket_connect_timeout=5)
 
 @app.get("/")
 @app.get("/health")
@@ -44,25 +44,27 @@ def health():
 async def prewarm_streams(video_ids: List[str]):
     """Background task to fetch stream URLs for top results."""
     for vid in video_ids:
-        # Check Redis first
-        if not await redis_client.get(f"stream:{vid}"):
-            try:
+        try:
+            # Check Redis first
+            if not await redis_client.get(f"stream:{vid}"):
                 info = await asyncio.to_thread(
                     stream_ydl.extract_info, 
                     f"https://www.youtube.com/watch?v={vid}", 
                     download=False
                 )
-                # Cache in Redis for 1 hour
                 await redis_client.setex(f"stream:{vid}", 3600, info["url"])
-            except Exception as e:
-                print(f"Pre-warm failed for {vid}: {e}")
+        except Exception as e:
+            # If Redis fails, we just don't pre-warm or cache
+            print(f"Redis pre-warm failed/skipped: {e}")
 
 async def get_search_results(query: str) -> List[Dict]:
-    # Check Redis cache
     cache_key = f"search:{query.lower()}"
-    cached_results = await redis_client.get(cache_key)
-    if cached_results:
-        return json.loads(cached_results)
+    try:
+        cached_results = await redis_client.get(cache_key)
+        if cached_results:
+            return json.loads(cached_results)
+    except Exception as e:
+        print(f"Redis cache read failed: {e}")
 
     result = await asyncio.to_thread(ydl_instance.extract_info, f"ytsearch5:{query}", download=False)
     songs = []
@@ -74,37 +76,57 @@ async def get_search_results(query: str) -> List[Dict]:
             "thumbnail": entry.get("thumbnail") or (entry.get("thumbnails")[0]["url"] if entry.get("thumbnails") else None)
         })
     
-    # Store in Redis for 1 hour
-    await redis_client.setex(cache_key, 3600, json.dumps(songs))
+    try:
+        await redis_client.setex(cache_key, 3600, json.dumps(songs))
+    except Exception as e:
+        print(f"Redis cache write failed: {e}")
+        
     return songs
 
 @app.get("/search")
 async def search_song(background_tasks: BackgroundTasks, q: str = Query(...)):
-    results = await get_search_results(q)
-    
-    # Check if we have cached URLs in Redis for these items
-    for song in results:
-        cached_url = await redis_client.get(f"stream:{song['id']}")
-        if cached_url:
-            song["stream_url"] = cached_url
+    try:
+        results = await get_search_results(q)
+        
+        # Check if we have cached URLs in Redis for these items
+        for song in results:
+            try:
+                cached_url = await redis_client.get(f"stream:{song['id']}")
+                if cached_url:
+                    song["stream_url"] = cached_url
+            except:
+                pass
 
-    # Trigger pre-warming for the first 3 results
-    vids = [s["id"] for s in results[:3] if s["id"]]
-    background_tasks.add_task(prewarm_streams, vids)
-    return results
+        # Trigger pre-warming for the first 3 results
+        vids = [s["id"] for s in results[:3] if s["id"]]
+        background_tasks.add_task(prewarm_streams, vids)
+        return results
+    except Exception as e:
+        # Fallback if the entire logic fails (e.g. network issue with yt-dlp)
+        print(f"Search failed: {e}")
+        return []
 
 @app.get("/stream/{video_id}")
 async def stream_audio(video_id: str):
-    # Check Redis cache
-    audio_url = await redis_client.get(f"stream:{video_id}")
+    audio_url = None
+    try:
+        audio_url = await redis_client.get(f"stream:{video_id}")
+    except:
+        pass
     
     if not audio_url:
         def get_audio_url(vid):
             info = stream_ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
             return info["url"]
-        audio_url = await asyncio.to_thread(get_audio_url, video_id)
-        # Store in Redis for 1 hour
-        await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
+        try:
+            audio_url = await asyncio.to_thread(get_audio_url, video_id)
+            try:
+                await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
+            except:
+                pass
+        except Exception as e:
+            print(f"Extraction failed: {e}")
+            return {"error": "Could not extract audio"}
 
     def audio_stream():
         with requests.get(audio_url, stream=True) as r:
