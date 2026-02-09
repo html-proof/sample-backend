@@ -37,7 +37,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"version": "v4-post-deployment-fixes"}
+    return {"version": "v5-strict-search-filtering"}
 
 async def prewarm_streams(video_ids: List[str]):
     """Background task to fetch stream URLs for top results."""
