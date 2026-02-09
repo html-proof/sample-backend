@@ -10,11 +10,15 @@ class YouTubeService:
             "no_warnings": True,
             "extract_flat": "in_playlist",
             "skip_download": True,
-            "source_address": "0.0.0.0",
             "nocheckcertificate": True,
             "youtube_include_dash_manifest": False,
             "no_color": True,
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "web"]
+                }
+            }
         }
         
         # Check for cookies (Base64 preferred for Env Vars)
