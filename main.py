@@ -37,7 +37,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"version": "v7-extreme-speed"}
+    return {"version": "v8-stream-reliability-fix"}
 
 async def prewarm_streams(video_ids: List[str]):
     """Background task to fetch stream URLs for top results."""
@@ -124,7 +124,6 @@ async def stream_audio(request: Request, video_id: str):
     import time
     start_time = time.time()
     
-    # Use global httpx client or create one (AsyncClient is much faster for concurrent requests)
     async with httpx.AsyncClient() as client:
         range_header = request.headers.get("Range")
         headers = {
@@ -135,16 +134,15 @@ async def stream_audio(request: Request, video_id: str):
         }
 
         try:
-            r = await client.build_request("GET", audio_url, headers=headers)._send_single_request()
-            # Note: client.stream() is preferred but build_request gives more control over stream lifecycle
-            
             async def get_response(url, current_headers):
                 return await client.stream("GET", url, headers=current_headers, timeout=10)
 
             response = await get_response(audio_url, headers)
             
+            # Auto-follow 403 (Expired)
             if response.status_code == 403:
                 print(f"[{time.time()-start_time:.2f}s] Stream 403 Refreshing...")
+                await response.aclose()
                 info = await yt_service.get_stream_url(video_id)
                 if info and "url" in info:
                     audio_url = info["url"]
@@ -155,6 +153,7 @@ async def stream_audio(request: Request, video_id: str):
 
             print(f"[{time.time()-start_time:.2f}s] Stream connected: {response.status_code}")
 
+            # Propagation of essential headers
             res_headers = {
                 "Accept-Ranges": "bytes",
                 "Content-Type": response.headers.get("Content-Type", "audio/mpeg"),
@@ -169,7 +168,7 @@ async def stream_audio(request: Request, video_id: str):
                     bytes_sent = 0
                     async for chunk in response.aiter_bytes(chunk_size=32 * 1024):
                         if bytes_sent < 64 * 1024:
-                            # Tiny bursts at start for instant audio engine activation
+                            # Deliver first few notes instantly
                             for i in range(0, len(chunk), 8 * 1024):
                                 yield chunk[i:i + 8 * 1024]
                         else:
@@ -178,7 +177,12 @@ async def stream_audio(request: Request, video_id: str):
                 finally:
                     await response.aclose()
 
-            return StreamingResponse(iter_content(), status_code=response.status_code, headers=res_headers)
+            return StreamingResponse(
+                iter_content(), 
+                status_code=response.status_code, 
+                headers=res_headers,
+                media_type=res_headers["Content-Type"]
+            )
 
         except Exception as e:
             print(f"Streaming critical failure: {e}")

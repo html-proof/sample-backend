@@ -5,7 +5,7 @@ import asyncio
 class YouTubeService:
     def __init__(self):
         self.YDL_OPTS = {
-            "format": "bestaudio/best",
+            "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best",
             "quiet": True,
             "no_warnings": True,
             "extract_flat": True,
@@ -14,14 +14,14 @@ class YouTubeService:
             "youtube_include_dash_manifest": False,
             "youtube_include_hls_manifest": False,
             "no_color": True,
-            "socket_timeout": 5, # Aggressive timeout
-            "retries": 0, # Fail fast
+            "socket_timeout": 5, 
+            "retries": 1, 
             "noplaylist": True,
             "lazy_playlist": True,
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["android", "ios"]
+                    "player_client": ["web", "android"]
                 }
             }
         }
