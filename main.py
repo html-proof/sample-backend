@@ -50,7 +50,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"version": "v9-stability-fix"}
+    return {"version": "v10-head-fix"}
 
 async def prewarm_streams(video_ids: List[str]):
     """Background task to fetch stream URLs for top results."""
@@ -145,12 +145,24 @@ async def stream_audio(request: Request, video_id: str):
     }
 
     try:
-        async def get_response(url, current_headers):
-            return await httpx_client.stream("GET", url, headers=current_headers, timeout=10)
+        # 1. HEAD request optimization: Just return headers, don't start stream generator
+        if request.method == "HEAD":
+            # Fast check against YouTube for real headers
+            async with httpx_client.stream("GET", audio_url, headers=headers, timeout=5) as r:
+                res_headers = {
+                    "Accept-Ranges": "bytes",
+                    "Content-Type": r.headers.get("Content-Type", "audio/mpeg").split(";")[0].strip(),
+                    "X-Accel-Buffering": "no",
+                }
+                if r.headers.get("Content-Length"): res_headers["Content-Length"] = r.headers.get("Content-Length")
+                if r.headers.get("Content-Range"): res_headers["Content-Range"] = r.headers.get("Content-Range")
+                return Response(status_code=r.status_code, headers=res_headers)
 
-        response = await get_response(audio_url, headers)
+        # 2. GET request: Start streaming
+        req = httpx_client.build_request("GET", audio_url, headers=headers)
+        response = await httpx_client.send(req, stream=True)
         
-        # Immediate retry on 403
+        # Immediate retry on 403 (Expired)
         if response.status_code == 403:
             print(f"[{time.time()-start_time:.2f}s] Stream 403. Re-extracting...")
             await response.aclose()
@@ -158,13 +170,15 @@ async def stream_audio(request: Request, video_id: str):
             if info and "url" in info:
                 audio_url = info["url"]
                 await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
-                response = await get_response(audio_url, headers)
+                req = httpx_client.build_request("GET", audio_url, headers=headers)
+                response = await httpx_client.send(req, stream=True)
             else:
                 return JSONResponse(status_code=403, content={"error": "Source link expired"})
 
+        print(f"[{time.time()-start_time:.2f}s] Stream connected: {response.status_code}")
+
         # Normalization of MIME types to prevent NotSupportedError
         raw_content_type = response.headers.get("Content-Type", "audio/mpeg")
-        # Strip codec info to avoid browser compatibility issues
         base_content_type = raw_content_type.split(";")[0].strip()
 
         res_headers = {
@@ -198,7 +212,9 @@ async def stream_audio(request: Request, video_id: str):
         )
 
     except Exception as e:
-        print(f"Streaming critical failure: {e}")
+        import traceback
+        print(f"Streaming critical failure ({request.method}): {e}")
+        traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 # Recommendation Endpoints
