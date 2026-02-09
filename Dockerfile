@@ -20,4 +20,5 @@ COPY . .
 
 # Expose is handled by many platforms via PORT env, removing hardcoded hint
 # Command to run the application using python main.py for custom port logic
-CMD ["python", "main.py"]
+# Command to run the application using uvicorn directly, relying on the PORT environment variable
+CMD uvicorn main:app --host 0.0.0.0 --port $PORT
