@@ -198,7 +198,15 @@ async def daily_mix(user_id: str):
 
 @app.get("/collections/{user_id}")
 async def collections(user_id: str):
-    return {"collections": firebase_db.get_user_collections(user_id)}
+    print(f"Fetching collections for {user_id}")
+    try:
+        data = firebase_db.get_user_collections(user_id)
+        if data is None:
+            return {"collections": {}}
+        return {"collections": data}
+    except Exception as e:
+        print(f"Error fetching collections: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 # Device Management Endpoints
 @app.post("/devices/register")
