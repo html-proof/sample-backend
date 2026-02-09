@@ -67,9 +67,14 @@ stream_ydl = yt_dlp.YoutubeDL(STREAM_OPTS)
 
 # Global session for connection pooling to reduce SSL handshake overhead
 http_session = requests.Session()
+# Set a browser-like User-Agent to avoid 403 Forbidden from YouTube
+http_session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+})
 adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20)
 http_session.mount("https://", adapter)
 http_session.mount("http://", adapter)
+
 
 # Redis connection with connection timeout
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -175,11 +180,23 @@ async def stream_audio(request: Request, video_id: str):
     if range_header:
         upstream_headers["Range"] = range_header
 
-    # Pre-fetch headers from YouTube to ensure browser gets Content-Length/Range
+    # Pre-fetch headers from YouTube with one-time retry if 403/expired
     try:
         r = http_session.get(audio_url, headers=upstream_headers, stream=True, timeout=5)
         
+        # If forbidden, the signature might have expired or UA was blocked
+        if r.status_code == 403:
+            r.close()
+            print(f"URL expired or blocked (403). Re-extracting for {video_id}...")
+            def re_extract(vid):
+                info = stream_ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
+                return info["url"]
+            audio_url = await asyncio.to_thread(re_extract, video_id)
+            await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
+            r = http_session.get(audio_url, headers=upstream_headers, stream=True, timeout=5)
+
         res_headers = {
+
             "Accept-Ranges": "bytes",
             "Content-Type": r.headers.get("Content-Type", "audio/mpeg"),
         }
