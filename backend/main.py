@@ -261,6 +261,29 @@ async def websocket_endpoint(websocket: WebSocket, background_tasks: BackgroundT
     except WebSocketDisconnect:
         pass
 
+@app.get("/debug/extract/{video_id}")
+async def debug_extract(video_id: str):
+    """Debug endpoint to test raw yt-dlp extraction."""
+    try:
+        info = await yt_service.get_stream_url(video_id)
+        if not info:
+            return JSONResponse(status_code=500, content={"error": "Extraction returned None"})
+        
+        # Return simplified info for debugging
+        return {
+            "title": info.get("title"),
+            "url": info.get("url"),
+            "duration": info.get("duration"),
+            "formats_count": len(info.get("formats", [])),
+            "cookies_used": yt_service.YDL_OPTS.get("cookiefile", "None")
+        }
+    except Exception as e:
+        import traceback
+        return JSONResponse(status_code=500, content={
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
