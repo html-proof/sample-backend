@@ -177,35 +177,41 @@ async def stream_audio(request: Request, video_id: str):
 
     # Pre-fetch headers from YouTube to ensure browser gets Content-Length/Range
     try:
-        with http_session.get(audio_url, headers=upstream_headers, stream=True, timeout=5) as r:
-            res_headers = {
-                "Accept-Ranges": "bytes",
-                "Content-Type": r.headers.get("Content-Type", "audio/mpeg"),
-            }
-            if r.headers.get("Content-Range"):
-                res_headers["Content-Range"] = r.headers.get("Content-Range")
-            if r.headers.get("Content-Length"):
-                res_headers["Content-Length"] = r.headers.get("Content-Length")
-            
-            status_code = r.status_code
+        r = http_session.get(audio_url, headers=upstream_headers, stream=True, timeout=5)
+        
+        res_headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Type": r.headers.get("Content-Type", "audio/mpeg"),
+        }
+        if r.headers.get("Content-Range"):
+            res_headers["Content-Range"] = r.headers.get("Content-Range")
+        if r.headers.get("Content-Length"):
+            res_headers["Content-Length"] = r.headers.get("Content-Length")
+        
+        status_code = r.status_code
 
-            if request.method == "HEAD":
-                return Response(status_code=status_code, headers=res_headers)
+        if request.method == "HEAD":
+            r.close()
+            return Response(status_code=status_code, headers=res_headers)
 
-            def iter_content():
+        def iter_content():
+            try:
                 for chunk in r.iter_content(chunk_size=256 * 1024):
                     if chunk:
                         yield chunk
+            finally:
+                r.close()
 
-            return StreamingResponse(
-                iter_content(),
-                status_code=status_code,
-                media_type=res_headers["Content-Type"],
-                headers=res_headers
-            )
+        return StreamingResponse(
+            iter_content(),
+            status_code=status_code,
+            media_type=res_headers["Content-Type"],
+            headers=res_headers
+        )
     except Exception as e:
         print(f"Streaming failed: {e}")
         return Response(status_code=500)
+
 
 
 
