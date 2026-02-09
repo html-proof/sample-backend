@@ -33,17 +33,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global HTTPX Client for connection pooling
-import httpx
-httpx_client = httpx.AsyncClient(
-    timeout=httpx.Timeout(10.0, connect=5.0),
-    limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
-    follow_redirects=True
-)
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"Incoming: {request.method} {request.url.path}")
+    response = await call_next(request)
+    return response
+
+# httpx_client will be initialized in startup
+httpx_client = None
+
+@app.on_event("startup")
+async def startup_event():
+    global httpx_client
+    import httpx
+    httpx_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=5.0),
+        limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+        follow_redirects=True
+    )
+    logger.info("Initializing HTTPX client on current event loop")
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    await httpx_client.aclose()
+    if httpx_client:
+        await httpx_client.aclose()
     await redis_client.close()
 
 # Redis connection
@@ -53,7 +66,7 @@ redis_client = redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=5
 @app.get("/")
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "app": "SonicStream"}
 
 @app.get("/version")
 def version():

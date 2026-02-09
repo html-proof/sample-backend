@@ -18,8 +18,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application code into the container
 COPY . .
 
-# Expose the port the app runs on
-EXPOSE 8000
-
+# Expose is handled by many platforms via PORT env, removing hardcoded hint
 # Command to run the application using python main.py for custom port logic
 CMD ["python", "main.py"]
