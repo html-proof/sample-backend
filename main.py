@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query, BackgroundTasks, Request, Response
+from fastapi import FastAPI, Query, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import yt_dlp
@@ -179,7 +179,40 @@ async def stream_audio(request: Request, video_id: str):
     return StreamingResponse(audio_stream(), media_type="audio/mpeg")
 
 
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, background_tasks: BackgroundTasks):
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_text()
+            try:
+                request_data = json.loads(data)
+                if request_data.get("type") == "search":
+                    query = request_data.get("query")
+                    if query:
+                        results = await get_search_results(query)
+                        # Enrich with cached stream URLs
+                        for song in results:
+                            cached_url = await redis_client.get(f"stream:{song['id']}")
+                            if cached_url:
+                                song["stream_url"] = cached_url
+                        
+                        await websocket.send_json({
+                            "type": "search_results",
+                            "query": query,
+                            "results": results
+                        })
+                        
+                        # Trigger pre-warming
+                        vids = [s["id"] for s in results[:3] if s["id"]]
+                        background_tasks.add_task(prewarm_streams, vids)
+            except Exception as e:
+                await websocket.send_json({"type": "error", "message": str(e)})
+    except WebSocketDisconnect:
+        print("Client disconnected from WebSocket")
+
 if __name__ == "__main__":
+
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
