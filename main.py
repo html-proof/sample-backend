@@ -196,11 +196,13 @@ async def stream_audio(request: Request, video_id: str):
 
         def iter_content():
             try:
-                for chunk in r.iter_content(chunk_size=256 * 1024):
+                # Reduced chunk size for better data efficiency if user skips
+                for chunk in r.iter_content(chunk_size=64 * 1024):
                     if chunk:
                         yield chunk
             finally:
                 r.close()
+
 
         return StreamingResponse(
             iter_content(),
@@ -241,8 +243,9 @@ async def websocket_endpoint(websocket: WebSocket, background_tasks: BackgroundT
                             "results": results
                         })
                         
-                        # Trigger pre-warming
-                        vids = [s["id"] for s in results[:3] if s["id"]]
+                        # Trigger pre-warming for the TOP 1 result only to save data
+                        vids = [s["id"] for s in results[:1] if s["id"]]
+
                         background_tasks.add_task(prewarm_streams, vids)
             except Exception as e:
                 await websocket.send_json({"type": "error", "message": str(e)})
