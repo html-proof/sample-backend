@@ -233,6 +233,7 @@ async def set_active_device(request: Request):
     success = device_manager.set_active_device(data.get("user_id"), data.get("device_id"))
     return {"success": success}
 
+@app.websocket("/ws")
 @app.websocket("/ws/music")
 async def websocket_endpoint(websocket: WebSocket, background_tasks: BackgroundTasks):
     await websocket.accept()
