@@ -29,10 +29,10 @@ YDL_OPTS = {
     "skip_download": True,
     "source_address": "0.0.0.0",
     "nocheckcertificate": True,
-    "youtube_include_dash_manifest": False,
-    "youtube_include_hls_manifest": False,
+    "youtube_include_dash_manifest": True,
     "no_color": True,
 }
+
 
 # Check for cookies (file or environment variable)
 COOKIE_PATH = "cookies.txt"
@@ -57,9 +57,9 @@ STREAM_OPTS = {
     "quiet": True,
     "no_warnings": True,
     "nocheckcertificate": True,
-    "youtube_include_dash_manifest": False,
-    "youtube_include_hls_manifest": False,
+    "youtube_include_dash_manifest": True,
 }
+
 if COOKIE_PATH:
     STREAM_OPTS["cookiefile"] = COOKIE_PATH
 
@@ -124,7 +124,6 @@ async def search_song(request: Request, background_tasks: BackgroundTasks, q: st
     try:
         results = await get_search_results(q)
         
-        # Check if we have cached URLs in Redis for these items
         for song in results:
             try:
                 cached_url = await redis_client.get(f"stream:{song['id']}")
@@ -133,17 +132,17 @@ async def search_song(request: Request, background_tasks: BackgroundTasks, q: st
             except:
                 pass
 
-        # Trigger pre-warming for the first 3 results
         vids = [s["id"] for s in results[:3] if s["id"]]
         background_tasks.add_task(prewarm_streams, vids)
         
         if request.method == "HEAD":
             return Response(status_code=200)
             
-        return results
+        from fastapi.responses import JSONResponse
+        return JSONResponse(content=results)
     except Exception as e:
         print(f"Search failed: {e}")
-        return []
+        return JSONResponse(content=[])
 
 @app.api_route("/stream/{video_id}", methods=["GET", "HEAD"])
 async def stream_audio(request: Request, video_id: str):
@@ -165,10 +164,15 @@ async def stream_audio(request: Request, video_id: str):
                 pass
         except Exception as e:
             print(f"Extraction failed: {e}")
-            return {"error": "Could not extract audio"}
+            return Response(content=json.dumps({"error": str(e)}), status_code=500, media_type="application/json")
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Type": "audio/mpeg",
+    }
 
     if request.method == "HEAD":
-        return Response(status_code=200)
+        return Response(status_code=200, headers=headers)
 
     def audio_stream():
         with requests.get(audio_url, stream=True) as r:
@@ -176,7 +180,8 @@ async def stream_audio(request: Request, video_id: str):
                 if chunk:
                     yield chunk
 
-    return StreamingResponse(audio_stream(), media_type="audio/mpeg")
+    return StreamingResponse(audio_stream(), media_type="audio/mpeg", headers=headers)
+
 
 
 @app.websocket("/ws")
