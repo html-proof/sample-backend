@@ -152,7 +152,43 @@ async def search_song(request: Request, background_tasks: BackgroundTasks, q: st
         print(f"Search failed: {e}")
         return JSONResponse(content=[])
 
+@app.get("/suggestions")
+async def suggestions(q: str = Query(...)):
+    """Fast, lightweight search for autocomplete suggestions."""
+    cache_key = f"suggest:{q.lower()}"
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except:
+        pass
+
+    try:
+        # Optimized search for speed: few results, flat extraction
+        opts = {**STREAM_OPTS, "extract_flat": True, "playlist_items": "1,2,3,4,5"}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = await asyncio.to_thread(ydl.extract_info, f"ytsearch5:{q}", download=False)
+            results = []
+            for entry in info.get("entries", []):
+                results.append({
+                    "id": entry.get("id"),
+                    "title": entry.get("title"),
+                    "thumbnail": entry.get("thumbnails", [{}])[0].get("url"),
+                    "duration": entry.get("duration", 0),
+                    "type": "suggestion"
+                })
+            
+            try:
+                await redis_client.setex(cache_key, 1800, json.dumps(results))
+            except:
+                pass
+            return results
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=500, media_type="application/json")
+
+
 @app.api_route("/stream/{video_id}", methods=["GET", "HEAD"])
+
 async def stream_audio(request: Request, video_id: str):
     audio_url = None
     try:
@@ -267,6 +303,32 @@ async def websocket_endpoint(websocket: WebSocket, background_tasks: BackgroundT
                         vids = [s["id"] for s in results[:1] if s["id"]]
 
                         background_tasks.add_task(prewarm_streams, vids)
+                elif request_data.get("type") == "autocomplete":
+                    query = request_data.get("query")
+                    if query and len(query) >= 2:
+                        cache_key = f"suggest:{query.lower()}"
+                        cached = await redis_client.get(cache_key)
+                        if cached:
+                            results = json.loads(cached)
+                        else:
+                            opts = {**STREAM_OPTS, "extract_flat": True, "playlist_items": "1,5"}
+                            with yt_dlp.YoutubeDL(opts) as ydl:
+                                info = await asyncio.to_thread(ydl.extract_info, f"ytsearch5:{query}", download=False)
+                                results = [{
+                                    "id": entry.get("id"),
+                                    "title": entry.get("title"),
+                                    "thumbnail": entry.get("thumbnails", [{}])[0].get("url"),
+                                    "duration": entry.get("duration", 0),
+                                    "type": "suggestion"
+                                } for entry in info.get("entries", [])]
+                                await redis_client.setex(cache_key, 1800, json.dumps(results))
+                        
+                        await websocket.send_json({
+                            "type": "suggestions",
+                            "query": query,
+                            "results": results
+                        })
+
             except Exception as e:
                 await websocket.send_json({"type": "error", "message": str(e)})
     except WebSocketDisconnect:
