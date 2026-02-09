@@ -15,7 +15,14 @@ from services.firebase_db import firebase_db
 from services.spotify_recommender import spotify_recommender
 from services.device_manager import device_manager
 
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 app = FastAPI()
+logger.info("Starting SonicStream Backend...")
 
 # Add CORS middleware
 app.add_middleware(
@@ -379,4 +386,5 @@ if __name__ == "__main__":
     import uvicorn
     import os
     port = int(os.getenv("PORT", 8000))
+    logger.info(f"Server starting on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
