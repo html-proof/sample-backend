@@ -87,8 +87,12 @@ class FirebaseDB:
         return data if data else {}
 
     def get_user_collections(self, user_id: str):
-        ref = db.reference(f"collections/{user_id}")
-        data = ref.get()
-        return data if data else {}
+        try:
+            ref = db.reference(f"collections/{user_id}")
+            data = ref.get()
+            return data if data else {}
+        except Exception as e:
+            print(f"Error fetching collections for {user_id}: {e}")
+            return {}
 
 firebase_db = FirebaseDB()

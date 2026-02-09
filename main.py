@@ -256,13 +256,13 @@ async def websocket_endpoint(websocket: WebSocket, background_tasks: BackgroundT
 
             elif req.get("type") == "search":
                 results = await search_service.search_songs(req.get("query"), user_id=user_id)
-                await websocket.send_json({"type": "search_results", "results": results})
+                await websocket.send_json({"type": "search_results", "query": req.get("query"), "results": results})
                 if results:
                     background_tasks.add_task(prewarm_streams, [results[0]["id"]])
             
             elif req.get("type") == "autocomplete":
                 results = await search_service.search_songs(req.get("query"), limit=5, user_id=user_id)
-                await websocket.send_json({"type": "suggestions", "results": results})
+                await websocket.send_json({"type": "suggestions", "query": req.get("query"), "results": results})
     except WebSocketDisconnect:
         pass
 
