@@ -50,7 +50,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"version": "v14-final-polish"}
+    return {"version": "v15-ws-stability-fix"}
 
 async def prewarm_streams(video_ids: List[str]):
     """Background task to fetch stream URLs for top results."""
@@ -299,7 +299,7 @@ async def set_active_device(request: Request):
 
 @app.websocket("/ws")
 @app.websocket("/ws/music")
-async def websocket_endpoint(websocket: WebSocket, background_tasks: BackgroundTasks):
+async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     user_id = "guest"
     device_id = None
@@ -320,27 +320,38 @@ async def websocket_endpoint(websocket: WebSocket, background_tasks: BackgroundT
 
             elif req.get("type") == "search":
                 results = await search_service.search_songs(req.get("query"), user_id=user_id)
-                # Enrich with cached stream URLs for instant playback
+                # Enrich with cached stream URLs
                 for song in results:
                     cached_url = await redis_client.get(f"stream:{song['id']}")
                     if cached_url:
-                        song["stream_url"] = cached_url.decode('utf-8')
+                        song["stream_url"] = cached_url if isinstance(cached_url, str) else cached_url.decode('utf-8')
                 
-                await websocket.send_json({"type": "search_results", "query": req.get("query"), "results": results})
+                await websocket.send_json({
+                    "type": "search_results", 
+                    "query": req.get("query"), 
+                    "results": results
+                })
+                
+                # Use asyncio task instead of BackgroundTasks (not natively supported in WS)
                 if results:
-                    background_tasks.add_task(prewarm_streams, [results[0]["id"]])
+                    asyncio.create_task(prewarm_streams([results[0]["id"]]))
             
             elif req.get("type") == "autocomplete":
                 results = await search_service.search_songs(req.get("query"), limit=5, user_id=user_id)
-                # Enrich suggestions too
                 for song in results:
                     cached_url = await redis_client.get(f"stream:{song['id']}")
                     if cached_url:
-                        song["stream_url"] = cached_url.decode('utf-8')
+                        song["stream_url"] = cached_url if isinstance(cached_url, str) else cached_url.decode('utf-8')
                         
-                await websocket.send_json({"type": "suggestions", "query": req.get("query"), "results": results})
+                await websocket.send_json({
+                    "type": "suggestions", 
+                    "query": req.get("query"), 
+                    "results": results
+                })
     except WebSocketDisconnect:
         pass
+    except Exception as e:
+        print(f"WS Critical Error: {e}")
 
 @app.get("/debug/extract/{video_id}")
 async def debug_extract(video_id: str):
