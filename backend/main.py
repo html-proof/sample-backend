@@ -35,6 +35,10 @@ redis_client = redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=5
 def health():
     return {"status": "ok"}
 
+@app.get("/version")
+def version():
+    return {"version": "v2-debug-enabled"}
+
 async def prewarm_streams(video_ids: List[str]):
     """Background task to fetch stream URLs for top results."""
     for vid in video_ids:
