@@ -4,7 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import yt_dlp
 import requests
 import asyncio
-from functools import lru_cache
+import os
+import json
+import redis.asyncio as redis
 from typing import List, Dict
 
 app = FastAPI()
@@ -30,8 +32,9 @@ YDL_OPTS = {
 ydl_instance = yt_dlp.YoutubeDL(YDL_OPTS)
 stream_ydl = yt_dlp.YoutubeDL({"format": "bestaudio/best", "quiet": True, "no_warnings": True})
 
-# In-memory storage for pre-warmed stream URLs
-stream_url_cache = {}
+# Redis connection
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 @app.get("/")
 @app.get("/health")
@@ -41,21 +44,27 @@ def health():
 async def prewarm_streams(video_ids: List[str]):
     """Background task to fetch stream URLs for top results."""
     for vid in video_ids:
-        if vid not in stream_url_cache:
+        # Check Redis first
+        if not await redis_client.get(f"stream:{vid}"):
             try:
-                # Run blocking extraction in a thread
                 info = await asyncio.to_thread(
                     stream_ydl.extract_info, 
                     f"https://www.youtube.com/watch?v={vid}", 
                     download=False
                 )
-                stream_url_cache[vid] = info["url"]
+                # Cache in Redis for 1 hour
+                await redis_client.setex(f"stream:{vid}", 3600, info["url"])
             except Exception as e:
                 print(f"Pre-warm failed for {vid}: {e}")
 
-@lru_cache(maxsize=100)
-def get_search_results(query: str) -> List[Dict]:
-    result = ydl_instance.extract_info(f"ytsearch5:{query}", download=False)
+async def get_search_results(query: str) -> List[Dict]:
+    # Check Redis cache
+    cache_key = f"search:{query.lower()}"
+    cached_results = await redis_client.get(cache_key)
+    if cached_results:
+        return json.loads(cached_results)
+
+    result = await asyncio.to_thread(ydl_instance.extract_info, f"ytsearch5:{query}", download=False)
     songs = []
     for entry in result.get("entries", []):
         songs.append({
@@ -64,33 +73,38 @@ def get_search_results(query: str) -> List[Dict]:
             "duration": entry.get("duration"),
             "thumbnail": entry.get("thumbnail") or (entry.get("thumbnails")[0]["url"] if entry.get("thumbnails") else None)
         })
+    
+    # Store in Redis for 1 hour
+    await redis_client.setex(cache_key, 3600, json.dumps(songs))
     return songs
 
 @app.get("/search")
 async def search_song(background_tasks: BackgroundTasks, q: str = Query(...)):
-    results = await asyncio.to_thread(get_search_results, q)
+    results = await get_search_results(q)
     
-    # Check if we have cached URLs for these items to include them directly
+    # Check if we have cached URLs in Redis for these items
     for song in results:
-        song["stream_url"] = stream_url_cache.get(song["id"])
+        cached_url = await redis_client.get(f"stream:{song['id']}")
+        if cached_url:
+            song["stream_url"] = cached_url
 
-    # Trigger pre-warming for the first 3 results in the background
+    # Trigger pre-warming for the first 3 results
     vids = [s["id"] for s in results[:3] if s["id"]]
     background_tasks.add_task(prewarm_streams, vids)
     return results
 
 @app.get("/stream/{video_id}")
 async def stream_audio(video_id: str):
-    # Check if we already have it in the pre-warm cache
-    audio_url = stream_url_cache.get(video_id)
+    # Check Redis cache
+    audio_url = await redis_client.get(f"stream:{video_id}")
     
     if not audio_url:
-        # Fallback to manual extraction if not pre-warmed
         def get_audio_url(vid):
             info = stream_ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
             return info["url"]
         audio_url = await asyncio.to_thread(get_audio_url, video_id)
-        stream_url_cache[video_id] = audio_url
+        # Store in Redis for 1 hour
+        await redis_client.setex(f"stream:{video_id}", 3600, audio_url)
 
     def audio_stream():
         with requests.get(audio_url, stream=True) as r:
@@ -103,5 +117,6 @@ async def stream_audio(video_id: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
 
