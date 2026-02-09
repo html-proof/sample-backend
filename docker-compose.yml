@@ -1,6 +1,6 @@
 services:
   backend:
-    build: ./backend
+    build: .
     ports:
       - "8000:8000"
     environment:
@@ -10,7 +10,6 @@ services:
   frontend:
     build: ./frontend
     ports:
-
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=https://sample-backend-production-b1dd.up.railway.app
