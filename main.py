@@ -26,6 +26,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Global HTTPX Client for connection pooling
+import httpx
+httpx_client = httpx.AsyncClient(
+    timeout=httpx.Timeout(10.0, connect=5.0),
+    limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+    follow_redirects=True
+)
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await httpx_client.aclose()
+    await redis_client.close()
+
 # Redis connection
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 redis_client = redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=5, socket_connect_timeout=5)
@@ -37,7 +50,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"version": "v8-stream-reliability-fix"}
+    return {"version": "v9-stability-fix"}
 
 async def prewarm_streams(video_ids: List[str]):
     """Background task to fetch stream URLs for top results."""

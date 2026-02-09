@@ -5,7 +5,7 @@ import asyncio
 class YouTubeService:
     def __init__(self):
         self.YDL_OPTS = {
-            "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best",
+            "format": "bestaudio/best",
             "quiet": True,
             "no_warnings": True,
             "extract_flat": True,
@@ -21,7 +21,7 @@ class YouTubeService:
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["web", "android"]
+                    "player_client": ["web"]
                 }
             }
         }
