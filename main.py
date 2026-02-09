@@ -20,7 +20,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Persistent yt-dlp instance for speed
+# Persistent yt-dlp instance with extreme speed optimizations
 YDL_OPTS = {
     "format": "bestaudio/best",
     "quiet": True,
@@ -28,6 +28,10 @@ YDL_OPTS = {
     "extract_flat": "in_playlist",
     "skip_download": True,
     "source_address": "0.0.0.0",
+    "nocheckcertificate": True,
+    "youtube_include_dash_manifest": False,
+    "youtube_include_hls_manifest": False,
+    "no_color": True,
 }
 
 # Check for cookies (file or environment variable)
@@ -35,13 +39,11 @@ COOKIE_PATH = "cookies.txt"
 yt_cookies = os.getenv("YT_COOKIES")
 
 if yt_cookies:
-    # If cookies are provided via env var, save them to a temp file
     with open("cookies_env.txt", "w") as f:
         f.write(yt_cookies)
     COOKIE_PATH = "cookies_env.txt"
-    print("Using cookies from environment variable")
 elif os.path.exists("cookies.txt"):
-    print("Using cookies.txt file")
+    pass
 else:
     COOKIE_PATH = None
 
@@ -50,11 +52,19 @@ if COOKIE_PATH:
 
 ydl_instance = yt_dlp.YoutubeDL(YDL_OPTS)
 
-STREAM_OPTS = {"format": "bestaudio/best", "quiet": True, "no_warnings": True}
+STREAM_OPTS = {
+    "format": "bestaudio/best",
+    "quiet": True,
+    "no_warnings": True,
+    "nocheckcertificate": True,
+    "youtube_include_dash_manifest": False,
+    "youtube_include_hls_manifest": False,
+}
 if COOKIE_PATH:
     STREAM_OPTS["cookiefile"] = COOKIE_PATH
 
 stream_ydl = yt_dlp.YoutubeDL(STREAM_OPTS)
+
 
 
 
