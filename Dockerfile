@@ -22,5 +22,5 @@ COPY . .
 ENV PORT=8000
 EXPOSE 8000
 
-# Command to run the application using python main.py for custom port logic
-CMD ["python", "main.py"]
+# Command to run the application using uvicorn directly with explicit WebSocket settings
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --ws-ping-interval 20 --ws-ping-timeout 20 --timeout-keep-alive 75"]
