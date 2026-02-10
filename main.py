@@ -58,8 +58,7 @@ app.add_middleware(
         "http://localhost:3001",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
-        "https://sample-backend-production-b1dd.up.railway.app",
-        "*" 
+        "https://sample-backend-production-b1dd.up.railway.app"
     ],
 
     allow_credentials=True,
